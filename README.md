@@ -32,6 +32,15 @@ After removing the Windows 11 Store Notepad, the script:
 
 Because these settings live under `HKLM` they apply machine-wide and are inherited by all new user profiles automatically.
 
+### Microsoft Edge defaults (all users, existing + new)
+
+The script configures machine-wide Edge policies under `HKLM:\SOFTWARE\Policies\Microsoft\Edge` to:
+
+1. Disable translation (`TranslateEnabled=0`)
+2. Set homepage to `https://google.com` (`HomepageLocation`)
+3. Restore previous session on startup (`RestoreOnStartup=1`)
+4. Disable Copilot chat/sidebar (`HubsSidebarEnabled=0`)
+
 ### Visual effects: disable menu animations, keep shadows and dragging
 
 The script also applies a custom visual-effects profile for:
@@ -83,6 +92,7 @@ Confirm the ShellNew and open-command registry entries:
 ```powershell
 Get-ItemProperty 'HKLM:\SOFTWARE\Classes\.txt\ShellNew'
 Get-ItemProperty 'HKLM:\SOFTWARE\Classes\txtfile\shell\open\command'
+Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
 ```
 
 For the currently logged-on user, confirm visual effects:
