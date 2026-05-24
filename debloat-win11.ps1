@@ -282,7 +282,7 @@ function Set-VisualEffectsProfile {
         Write-Log "Visual-effects profile applied for $ScopeLabel."
     }
     catch {
-        Write-Log "Failed to apply visual-effects profile for ${ScopeLabel}: $($_.Exception.Message)" 'ERROR'
+        Write-Log ("Failed to apply visual-effects profile for {0}: {1}" -f $ScopeLabel, $_.Exception.Message) 'ERROR'
     }
 }
 
@@ -386,6 +386,44 @@ function Set-VisualEffectsForAllUsers {
     }
 }
 
+function Set-EdgePolicyDefaultsForAllUsers {
+    <#
+    .SYNOPSIS
+        Configures Microsoft Edge policies at HKLM for all existing and future users.
+    #>
+
+    $edgePolicyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+    $homepage = 'https://google.com'
+
+    Write-Log "Configuring Microsoft Edge machine-wide policies."
+
+    if ($WhatIfMode) {
+        Write-Log "WHATIF: Would set Edge policy TranslateEnabled=0"
+        Write-Log "WHATIF: Would set Edge policy HomepageLocation='$homepage'"
+        Write-Log "WHATIF: Would set Edge policy HomepageIsNewTabPage=0"
+        Write-Log "WHATIF: Would set Edge policy RestoreOnStartup=1 (restore previous session)"
+        Write-Log "WHATIF: Would set Edge policy HubsSidebarEnabled=0 (disable Copilot chat/sidebar)"
+        return
+    }
+
+    try {
+        if (-not (Test-Path $edgePolicyPath)) {
+            New-Item -Path $edgePolicyPath -Force | Out-Null
+        }
+
+        New-ItemProperty -Path $edgePolicyPath -Name 'TranslateEnabled' -Value 0 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path $edgePolicyPath -Name 'HomepageLocation' -Value $homepage -PropertyType String -Force | Out-Null
+        New-ItemProperty -Path $edgePolicyPath -Name 'HomepageIsNewTabPage' -Value 0 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path $edgePolicyPath -Name 'RestoreOnStartup' -Value 1 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path $edgePolicyPath -Name 'HubsSidebarEnabled' -Value 0 -PropertyType DWord -Force | Out-Null
+
+        Write-Log "Configured Edge policies: translation disabled, homepage set to $homepage, restore previous session enabled, Copilot chat/sidebar disabled."
+    }
+    catch {
+        Write-Log "Failed to configure Edge policies: $($_.Exception.Message)" 'ERROR'
+    }
+}
+
 function Remove-NewOutlookTaskbarPinForCurrentUser {
     Write-Log "Removing New Outlook taskbar pin for the current user (if present)."
 
@@ -407,44 +445,6 @@ function Remove-NewOutlookTaskbarPinForCurrentUser {
             foreach ($pin in $newOutlookPins) {
                 Remove-Item -Path $pin.FullName -Force -ErrorAction Stop
                 Write-Log "Removed pinned taskbar shortcut: $($pin.Name)"
-            }
-        }
-
-        function Set-EdgePolicyDefaultsForAllUsers {
-            <#
-            .SYNOPSIS
-                Configures Microsoft Edge policies at HKLM for all existing and future users.
-            #>
-
-            $edgePolicyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
-            $homepage = 'https://google.com'
-
-            Write-Log "Configuring Microsoft Edge machine-wide policies."
-
-            if ($WhatIfMode) {
-                Write-Log "WHATIF: Would set Edge policy TranslateEnabled=0"
-                Write-Log "WHATIF: Would set Edge policy HomepageLocation='$homepage'"
-                Write-Log "WHATIF: Would set Edge policy HomepageIsNewTabPage=0"
-                Write-Log "WHATIF: Would set Edge policy RestoreOnStartup=1 (restore previous session)"
-                Write-Log "WHATIF: Would set Edge policy HubsSidebarEnabled=0 (disable Copilot chat/sidebar)"
-                return
-            }
-
-            try {
-                if (-not (Test-Path $edgePolicyPath)) {
-                    New-Item -Path $edgePolicyPath -Force | Out-Null
-                }
-
-                New-ItemProperty -Path $edgePolicyPath -Name 'TranslateEnabled' -Value 0 -PropertyType DWord -Force | Out-Null
-                New-ItemProperty -Path $edgePolicyPath -Name 'HomepageLocation' -Value $homepage -PropertyType String -Force | Out-Null
-                New-ItemProperty -Path $edgePolicyPath -Name 'HomepageIsNewTabPage' -Value 0 -PropertyType DWord -Force | Out-Null
-                New-ItemProperty -Path $edgePolicyPath -Name 'RestoreOnStartup' -Value 1 -PropertyType DWord -Force | Out-Null
-                New-ItemProperty -Path $edgePolicyPath -Name 'HubsSidebarEnabled' -Value 0 -PropertyType DWord -Force | Out-Null
-
-                Write-Log "Configured Edge policies: translation disabled, homepage set to $homepage, restore previous session enabled, Copilot chat/sidebar disabled."
-            }
-            catch {
-                Write-Log "Failed to configure Edge policies: $($_.Exception.Message)" 'ERROR'
             }
         }
 
