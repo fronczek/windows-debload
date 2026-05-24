@@ -41,6 +41,22 @@ The script configures machine-wide Edge policies under `HKLM:\SOFTWARE\Policies\
 3. Restore previous session on startup (`RestoreOnStartup=1`)
 4. Disable Copilot chat/sidebar (`HubsSidebarEnabled=0`)
 
+### Visual effects: disable menu animations, keep shadows and dragging
+
+The script also applies a custom visual-effects profile for:
+
+* all existing local user profiles (loaded or offline hives), and
+* the default user profile (`C:\Users\Default\NTUSER.DAT`) so new users inherit it.
+
+Applied behavior:
+
+* menu-related animations are disabled (`MenuAnimation`, `ComboBoxAnimation`, `ListBoxSmoothScrolling`, `TooltipAnimation`, `SelectionFade`, `TaskbarAnimations`, `ControlAnimations`)
+* shadows and dragging are kept enabled (`DropShadow`, `CursorShadow`, `DragFullWindows`)
+
+### New Outlook taskbar pin cleanup
+
+The script also removes **New Outlook** taskbar pins for the user running it, preventing stale taskbar buttons from triggering a reinstall attempt after the app package is removed.
+
 ## Usage
 
 ```powershell
@@ -77,4 +93,12 @@ Confirm the ShellNew and open-command registry entries:
 Get-ItemProperty 'HKLM:\SOFTWARE\Classes\.txt\ShellNew'
 Get-ItemProperty 'HKLM:\SOFTWARE\Classes\txtfile\shell\open\command'
 Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+```
+
+For the currently logged-on user, confirm visual effects:
+
+```powershell
+Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects\MenuAnimation'
+Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects\DropShadow'
+Get-ItemProperty 'HKCU:\Control Panel\Desktop' -Name DragFullWindows
 ```
