@@ -212,10 +212,21 @@ public static class RegistryPrivilege {
 '@
     }
 
+    $originalAcl = $null
+
     try {
         # Enable token privileges required for ownership transfer
         [RegistryPrivilege]::Enable('SeTakeOwnershipPrivilege')
         [RegistryPrivilege]::Enable('SeRestorePrivilege')
+
+        $readAclKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(
+            $clsidSubKey,
+            [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadSubTree,
+            [System.Security.AccessControl.RegistryRights]::ReadPermissions
+        )
+        if (-not $readAclKey) { throw "Could not open CLSID key for reading original ACL." }
+        $originalAcl = $readAclKey.GetAccessControl([System.Security.AccessControl.AccessControlSections]::All)
+        $readAclKey.Close()
 
         $admSid = [System.Security.Principal.SecurityIdentifier]::new(
             [System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
@@ -258,6 +269,28 @@ public static class RegistryPrivilege {
     }
     catch {
         Write-Log "Failed to configure classic right-click menu: $($_.Exception.Message)" 'ERROR'
+    }
+    finally {
+        if ($originalAcl) {
+            try {
+                $restoreKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(
+                    $clsidSubKey,
+                    [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,
+                    [System.Security.AccessControl.RegistryRights]::ChangePermissions
+                )
+                if ($restoreKey) {
+                    $restoreKey.SetAccessControl($originalAcl)
+                    $restoreKey.Close()
+                    Write-Log "Restored original ACL and owner for HKLM:\$clsidSubKey."
+                }
+                else {
+                    Write-Log "Could not reopen HKLM:\$clsidSubKey to restore ACL." 'WARN'
+                }
+            }
+            catch {
+                Write-Log "Failed to restore original ACL for HKLM:\${clsidSubKey}: $($_.Exception.Message)" 'WARN'
+            }
+        }
     }
 }
 
@@ -314,7 +347,7 @@ function Set-VisualEffectsProfile {
         [string]$ScopeLabel
     )
 
-    $effectSettings = @{
+    $animationEffects = @{
         ControlAnimations   = 0
         MenuAnimation       = 0
         ComboBoxAnimation   = 0
@@ -322,30 +355,50 @@ function Set-VisualEffectsProfile {
         TooltipAnimation    = 0
         SelectionFade       = 0
         TaskbarAnimations   = 0
+        MinAnimate          = 0
+    }
+
+    $preservedEffects = @{
         DropShadow          = 1
         CursorShadow        = 1
-        DragFullWindows     = 1
+        FontSmoothing       = 1
+        DesktopComposition  = 1
+        Themes              = 1
+        ListviewShadow      = 1
     }
 
     $visualEffectsPath = "$HiveRoot\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
     $desktopPath = "$HiveRoot\Control Panel\Desktop"
+    $windowMetricsPath = "$desktopPath\WindowMetrics"
 
-    Write-Log "Applying visual-effects profile for $ScopeLabel (disable menu animations, keep shadows and dragging)."
+    Write-Log "Applying visual-effects profile for $ScopeLabel (disable animations, keep shadows/font smoothing/wallpaper)."
 
     if ($WhatIfMode) {
-        Write-Log "WHATIF: Would set '$visualEffectsPath\\VisualFXSetting' to 3"
+        Write-Log "WHATIF: Would set animation-related effects to disabled under '$visualEffectsPath'"
+        Write-Log "WHATIF: Would set non-animation effects (including font smoothing and shadows) to enabled under '$visualEffectsPath'"
         Write-Log "WHATIF: Would set '$desktopPath\\DragFullWindows' to '1'"
-        foreach ($name in $effectSettings.Keys) {
-            Write-Log "WHATIF: Would set '$visualEffectsPath\\$name\\DefaultApplied' to $($effectSettings[$name])"
+        Write-Log "WHATIF: Would set '$desktopPath\\FontSmoothing' to '2'"
+        Write-Log "WHATIF: Would set '$desktopPath\\FontSmoothingType' to 2"
+        Write-Log "WHATIF: Would set '$windowMetricsPath\\MinAnimate' to '0'"
+        foreach ($name in $animationEffects.Keys) {
+            Write-Log "WHATIF: Would set '$visualEffectsPath\\$name\\DefaultApplied' to $($animationEffects[$name])"
+        }
+        foreach ($name in $preservedEffects.Keys) {
+            Write-Log "WHATIF: Would set '$visualEffectsPath\\$name\\DefaultApplied' to $($preservedEffects[$name])"
         }
         return
     }
 
     try {
         New-Item -Path $visualEffectsPath -Force -ErrorAction Stop | Out-Null
-        New-ItemProperty -Path $visualEffectsPath -Name 'VisualFXSetting' -Value 3 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
 
-        foreach ($entry in $effectSettings.GetEnumerator()) {
+        foreach ($entry in $animationEffects.GetEnumerator()) {
+            $effectPath = "$visualEffectsPath\$($entry.Key)"
+            New-Item -Path $effectPath -Force -ErrorAction Stop | Out-Null
+            New-ItemProperty -Path $effectPath -Name 'DefaultApplied' -Value $entry.Value -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+        }
+
+        foreach ($entry in $preservedEffects.GetEnumerator()) {
             $effectPath = "$visualEffectsPath\$($entry.Key)"
             New-Item -Path $effectPath -Force -ErrorAction Stop | Out-Null
             New-ItemProperty -Path $effectPath -Name 'DefaultApplied' -Value $entry.Value -PropertyType DWord -Force -ErrorAction Stop | Out-Null
@@ -353,6 +406,10 @@ function Set-VisualEffectsProfile {
 
         New-Item -Path $desktopPath -Force -ErrorAction Stop | Out-Null
         New-ItemProperty -Path $desktopPath -Name 'DragFullWindows' -Value '1' -PropertyType String -Force -ErrorAction Stop | Out-Null
+        New-ItemProperty -Path $desktopPath -Name 'FontSmoothing' -Value '2' -PropertyType String -Force -ErrorAction Stop | Out-Null
+        New-ItemProperty -Path $desktopPath -Name 'FontSmoothingType' -Value 2 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+        New-Item -Path $windowMetricsPath -Force -ErrorAction Stop | Out-Null
+        New-ItemProperty -Path $windowMetricsPath -Name 'MinAnimate' -Value '0' -PropertyType String -Force -ErrorAction Stop | Out-Null
 
         Write-Log "Visual-effects profile applied for $ScopeLabel."
     }
@@ -571,10 +628,10 @@ Set-OldRightClickMenuForAllUsers
 Set-VisualEffectsForAllUsers
 Remove-NewOutlookTaskbarPinForCurrentUser
 
-Write-Log "Finished Windows 11 Appx debloat."
-
 Set-ClassicNotepadShellNew
 Set-EdgePolicyDefaultsForAllUsers
+
+Write-Log "Finished Windows 11 Appx debloat."
 
 Write-Host ''
 Write-Host 'Verification commands:'

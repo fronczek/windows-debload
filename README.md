@@ -1,4 +1,4 @@
-# windows-debload
+# windows-debloat
 
 A PowerShell script that removes unwanted Windows 11 Appx (Store) packages and restores classic behaviour for `.txt` files.
 
@@ -41,7 +41,7 @@ The script configures machine-wide Edge policies under `HKLM:\SOFTWARE\Policies\
 3. Restore previous session on startup (`RestoreOnStartup=1`)
 4. Disable Copilot chat/sidebar (`HubsSidebarEnabled=0`)
 
-### Visual effects: disable menu animations, keep shadows and dragging
+### Visual effects: disable animations, keep readability/appearance
 
 The script also applies a custom visual-effects profile for:
 
@@ -50,8 +50,9 @@ The script also applies a custom visual-effects profile for:
 
 Applied behavior:
 
-* menu-related animations are disabled (`MenuAnimation`, `ComboBoxAnimation`, `ListBoxSmoothScrolling`, `TooltipAnimation`, `SelectionFade`, `TaskbarAnimations`, `ControlAnimations`)
-* shadows and dragging are kept enabled (`DropShadow`, `CursorShadow`, `DragFullWindows`)
+* animation-related effects are disabled (`MenuAnimation`, `ComboBoxAnimation`, `ListBoxSmoothScrolling`, `TooltipAnimation`, `SelectionFade`, `TaskbarAnimations`, `ControlAnimations`, `MinAnimate`)
+* readability/appearance effects are kept enabled (`DropShadow`, `CursorShadow`, `FontSmoothing`, `DesktopComposition`, `Themes`, `ListviewShadow`, `DragFullWindows`)
+* classic font smoothing is explicitly enabled via `HKCU/HKU ...\Control Panel\Desktop` (`FontSmoothing=2`, `FontSmoothingType=2`)
 
 ### New Outlook taskbar pin cleanup
 
