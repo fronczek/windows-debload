@@ -164,27 +164,28 @@ function Remove-ProvisionedAppxForFutureUsers {
             }
         }
 
-        function Set-OldRightClickMenuForAllUsers {
-            $classicMenuClsid = '{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}'
-            $keyPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\$classicMenuClsid\InprocServer32"
+    }
+}
 
-            Write-Log "Configuring classic right-click menu for all existing and new users."
+function Set-OldRightClickMenuForAllUsers {
+    $classicMenuClsid = '{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}'
+    $keyPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\$classicMenuClsid\InprocServer32"
 
-            if ($WhatIfMode) {
-                Write-Log "WHATIF: New-Item -Path '$keyPath' -Force"
-                Write-Log "WHATIF: Set-ItemProperty -Path '$keyPath' -Name '(default)' -Value ''"
-                return
-            }
+    Write-Log "Configuring classic right-click menu for all existing and new users."
 
-            try {
-                New-Item -Path $keyPath -Force | Out-Null
-                Set-ItemProperty -Path $keyPath -Name '(default)' -Value ''
-                Write-Log "Classic right-click menu configured at machine scope."
-            }
-            catch {
-                Write-Log "Failed to configure classic right-click menu: $($_.Exception.Message)" 'ERROR'
-            }
-        }
+    if ($WhatIfMode) {
+        Write-Log "WHATIF: New-Item -Path '$keyPath' -Force"
+        Write-Log "WHATIF: Set-ItemProperty -Path '$keyPath' -Name '(default)' -Value ''"
+        return
+    }
+
+    try {
+        New-Item -Path $keyPath -Force | Out-Null
+        Set-ItemProperty -Path $keyPath -Name '(default)' -Value ''
+        Write-Log "Classic right-click menu configured at machine scope."
+    }
+    catch {
+        Write-Log "Failed to configure classic right-click menu: $($_.Exception.Message)" 'ERROR'
     }
 }
 
