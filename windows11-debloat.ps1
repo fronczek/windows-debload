@@ -70,9 +70,9 @@ $Targets = @(
     'MicrosoftCorporationII.MicrosoftFamily'
 )
 
-# Things I would not remove by default.
-# Add to $Targets manually only if you are sure.
-$ProtectedExamples = @(
+# Packages that must never be removed. Any overlap with $Targets is stripped
+# at runtime before processing begins.
+$ProtectedTargets = @(
     'Microsoft.WindowsStore',
     'Microsoft.StorePurchaseApp',
     'Microsoft.DesktopAppInstaller',
@@ -96,74 +96,56 @@ function Write-Log {
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $line = "[$timestamp] [$Level] $Message"
 
+    $logDir = Split-Path $LogPath -Parent
+    if (-not (Test-Path $logDir)) { New-Item -Path $logDir -ItemType Directory -Force | Out-Null }
+
     Write-Host $line
-    Add-Content -Path $LogPath -Value $line
+    Add-Content -Path $LogPath -Value $line -Encoding UTF8
 }
 
-function Remove-InstalledAppxForExistingUsers {
-    param(
-        [string]$PackageName
-    )
+function Remove-AppxTarget {
+    param([string]$PackageName)
 
+    Write-Log "Processing: $PackageName"
+
+    # Installed packages (existing users)
     $packages = Get-AppxPackage -AllUsers -Name $PackageName -ErrorAction SilentlyContinue
-
-    if (-not $packages) {
-        Write-Log "Installed Appx not found for existing users: $PackageName"
-        return
-    }
-
+    if (-not $packages) { Write-Log "  Installed Appx not found for existing users." }
     foreach ($pkg in $packages) {
-        if ($pkg.NonRemovable) {
-            Write-Log "Skipping non-removable package: $($pkg.PackageFullName)" 'WARN'
+        if ($pkg.NonRemovable -eq $true) {
+            Write-Log "  Skipping non-removable: $($pkg.PackageFullName)" 'WARN'
             continue
         }
-
-        Write-Log "Removing installed Appx for existing users: $($pkg.PackageFullName)"
-
         if ($WhatIfMode) {
-            Write-Log "WHATIF: Remove-AppxPackage -AllUsers -Package '$($pkg.PackageFullName)'"
+            Write-Log "  WHATIF: Remove-AppxPackage -AllUsers '$($pkg.PackageFullName)'"
         }
         else {
             try {
                 Remove-AppxPackage -AllUsers -Package $pkg.PackageFullName -ErrorAction Stop
-                Write-Log "Removed installed Appx: $($pkg.PackageFullName)"
+                Write-Log "  Removed installed Appx: $($pkg.PackageFullName)"
             }
             catch {
-                Write-Log "Failed to remove installed Appx $($pkg.PackageFullName): $($_.Exception.Message)" 'ERROR'
+                Write-Log "  Failed to remove installed Appx $($pkg.PackageFullName): $($_.Exception.Message)" 'ERROR'
             }
         }
     }
-}
 
-function Remove-ProvisionedAppxForFutureUsers {
-    param(
-        [string]$PackageName
-    )
-
-    $provisioned = Get-AppxProvisionedPackage -Online |
-        Where-Object { $_.DisplayName -eq $PackageName }
-
-    if (-not $provisioned) {
-        Write-Log "Provisioned Appx not found for future users: $PackageName"
-        return
-    }
-
+    # Provisioned packages (future users)
+    $provisioned = Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -eq $PackageName }
+    if (-not $provisioned) { Write-Log "  Provisioned Appx not found for future users." }
     foreach ($pkg in $provisioned) {
-        Write-Log "Removing provisioned Appx for future users: $($pkg.PackageName)"
-
         if ($WhatIfMode) {
-            Write-Log "WHATIF: Remove-AppxProvisionedPackage -Online -PackageName '$($pkg.PackageName)'"
+            Write-Log "  WHATIF: Remove-AppxProvisionedPackage -Online '$($pkg.PackageName)'"
         }
         else {
             try {
                 Remove-AppxProvisionedPackage -Online -PackageName $pkg.PackageName -ErrorAction Stop | Out-Null
-                Write-Log "Removed provisioned Appx: $($pkg.PackageName)"
+                Write-Log "  Removed provisioned Appx: $($pkg.PackageName)"
             }
             catch {
-                Write-Log "Failed to remove provisioned Appx $($pkg.PackageName): $($_.Exception.Message)" 'ERROR'
+                Write-Log "  Failed to remove provisioned Appx $($pkg.PackageName): $($_.Exception.Message)" 'ERROR'
             }
         }
-
     }
 }
 
@@ -197,6 +179,8 @@ public static class RegistryPrivilege {
     static extern bool OpenProcessToken(IntPtr h, int acc, ref IntPtr phtok);
     [DllImport("advapi32.dll", SetLastError = true)]
     static extern bool LookupPrivilegeValue(string host, string name, ref long pluid);
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+    static extern bool CloseHandle(IntPtr h);
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     struct TokPriv1Luid { public int Count; public long Luid; public int Attr; }
     const int SE_PRIVILEGE_ENABLED = 2, TOKEN_QUERY = 8, TOKEN_ADJUST_PRIVILEGES = 32;
@@ -204,9 +188,13 @@ public static class RegistryPrivilege {
         IntPtr htok = IntPtr.Zero;
         OpenProcessToken(System.Diagnostics.Process.GetCurrentProcess().Handle,
             TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, ref htok);
-        TokPriv1Luid tp; tp.Count = 1; tp.Luid = 0; tp.Attr = SE_PRIVILEGE_ENABLED;
-        LookupPrivilegeValue(null, privilege, ref tp.Luid);
-        AdjustTokenPrivileges(htok, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero);
+        try {
+            TokPriv1Luid tp; tp.Count = 1; tp.Luid = 0; tp.Attr = SE_PRIVILEGE_ENABLED;
+            LookupPrivilegeValue(null, privilege, ref tp.Luid);
+            AdjustTokenPrivileges(htok, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero);
+        } finally {
+            if (htok != IntPtr.Zero) CloseHandle(htok);
+        }
     }
 }
 '@
@@ -295,12 +283,6 @@ public static class RegistryPrivilege {
 }
 
 function Set-ClassicNotepadShellNew {
-    <#
-    .SYNOPSIS
-        Restores right-click "New Text Document" and sets classic notepad.exe as the
-        default .txt opener via HKLM, covering all existing and future users.
-    #>
-
     $notepadPath = "$env:SystemRoot\System32\notepad.exe"
 
     Write-Log "Restoring right-click 'New Text Document' using classic notepad.exe ($notepadPath)."
@@ -311,28 +293,16 @@ function Set-ClassicNotepadShellNew {
     }
 
     try {
-        # Right-click New > Text Document (applies to all users via HKLM)
-        $shellNewPath = 'HKLM:\SOFTWARE\Classes\.txt\ShellNew'
-        if (-not (Test-Path $shellNewPath)) {
-            New-Item -Path $shellNewPath -Force | Out-Null
-        }
-        New-ItemProperty -Path $shellNewPath -Name 'NullFile' -Value '' -PropertyType String -Force | Out-Null
-        Write-Log "Set ShellNew NullFile for .txt (all users)"
+        # Right-click New > Text Document (all users via HKLM)
+        New-Item -Path 'HKLM:\SOFTWARE\Classes\.txt\ShellNew' -Force -ErrorAction Stop | Out-Null
+        New-ItemProperty -Path 'HKLM:\SOFTWARE\Classes\.txt\ShellNew' -Name 'NullFile' -Value '' -PropertyType String -Force | Out-Null
 
-        # Ensure .txt default ProgID is txtfile
-        $txtPath = 'HKLM:\SOFTWARE\Classes\.txt'
-        if (-not (Test-Path $txtPath)) {
-            New-Item -Path $txtPath -Force | Out-Null
-        }
-        Set-ItemProperty -Path $txtPath -Name '(default)' -Value 'txtfile' -Force
-
-        # Ensure txtfile opens with classic notepad.exe
-        $openCmdPath = 'HKLM:\SOFTWARE\Classes\txtfile\shell\open\command'
-        if (-not (Test-Path $openCmdPath)) {
-            New-Item -Path $openCmdPath -Force | Out-Null
-        }
-        Set-ItemProperty -Path $openCmdPath -Name '(default)' -Value "`"$notepadPath`" `"%1`"" -Force
-        Write-Log "Set txtfile open command: `"$notepadPath`" `"%1`""
+        # Ensure .txt -> txtfile -> classic notepad.exe
+        New-Item -Path 'HKLM:\SOFTWARE\Classes\.txt' -Force -ErrorAction Stop | Out-Null
+        Set-ItemProperty -Path 'HKLM:\SOFTWARE\Classes\.txt' -Name '(default)' -Value 'txtfile' -Force
+        New-Item -Path 'HKLM:\SOFTWARE\Classes\txtfile\shell\open\command' -Force -ErrorAction Stop | Out-Null
+        Set-ItemProperty -Path 'HKLM:\SOFTWARE\Classes\txtfile\shell\open\command' -Name '(default)' -Value "`"$notepadPath`" `"%1`"" -Force
+        Write-Log "Set .txt default to txtfile; open command: `"$notepadPath`" `"%1`""
     }
     catch {
         Write-Log "Failed to restore classic Notepad ShellNew: $($_.Exception.Message)" 'ERROR'
@@ -347,24 +317,21 @@ function Set-VisualEffectsProfile {
         [string]$ScopeLabel
     )
 
-    $animationEffects = @{
-        ControlAnimations   = 0
-        MenuAnimation       = 0
-        ComboBoxAnimation   = 0
+    # per-effect values: 0 = disable, 1 = keep
+    $effectValues = @{
+        ControlAnimations      = 0
+        MenuAnimation          = 0
+        ComboBoxAnimation      = 0
         ListBoxSmoothScrolling = 0
-        TooltipAnimation    = 0
-        SelectionFade       = 0
-        TaskbarAnimations   = 0
-        MinAnimate          = 0
-    }
-
-    $preservedEffects = @{
-        DropShadow          = 1
-        CursorShadow        = 1
-        FontSmoothing       = 1
-        DesktopComposition  = 1
-        Themes              = 1
-        ListviewShadow      = 1
+        TooltipAnimation       = 0
+        SelectionFade          = 0
+        TaskbarAnimations      = 0
+        DropShadow             = 1
+        CursorShadow           = 1
+        FontSmoothing          = 1
+        DesktopComposition     = 1
+        Themes                 = 1
+        ListviewShadow         = 1
     }
 
     $visualEffectsPath = "$HiveRoot\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
@@ -373,32 +340,22 @@ function Set-VisualEffectsProfile {
 
     Write-Log "Applying visual-effects profile for $ScopeLabel (disable animations, keep shadows/font smoothing/desktop composition/themes)."
 
+    # Bitmask for UserPreferencesMask: keep shadows, font smoothing, thumbnail previews;
+    # disable slide animations, fade effects, animate windows, etc.
+    # Bytes (little-endian): 90 12 03 80 10 00 00 00
+    $userPrefMask = [byte[]](0x90, 0x12, 0x03, 0x80, 0x10, 0x00, 0x00, 0x00)
+
     if ($WhatIfMode) {
-        Write-Log "WHATIF: Would set animation-related effects to disabled under '$visualEffectsPath'"
-        Write-Log "WHATIF: Would set non-animation effects (including font smoothing and shadows) to enabled under '$visualEffectsPath'"
-        Write-Log "WHATIF: Would set '$desktopPath\\DragFullWindows' to '1'"
-        Write-Log "WHATIF: Would set '$desktopPath\\FontSmoothing' to '2'"
-        Write-Log "WHATIF: Would set '$desktopPath\\FontSmoothingType' to 2"
-        Write-Log "WHATIF: Would set '$windowMetricsPath\\MinAnimate' to '0'"
-        foreach ($name in $animationEffects.Keys) {
-            Write-Log "WHATIF: Would set '$visualEffectsPath\\$name\\DefaultApplied' to $($animationEffects[$name])"
-        }
-        foreach ($name in $preservedEffects.Keys) {
-            Write-Log "WHATIF: Would set '$visualEffectsPath\\$name\\DefaultApplied' to $($preservedEffects[$name])"
-        }
+        Write-Log "WHATIF: Would apply visual-effects profile under '$HiveRoot' (disable animations, keep shadows/font-smoothing)."
         return
     }
 
     try {
         New-Item -Path $visualEffectsPath -Force -ErrorAction Stop | Out-Null
+        # VisualFXSetting=3 tells Windows to use custom (per-effect) settings
+        New-ItemProperty -Path $visualEffectsPath -Name 'VisualFXSetting' -Value 3 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
 
-        foreach ($entry in $animationEffects.GetEnumerator()) {
-            $effectPath = "$visualEffectsPath\$($entry.Key)"
-            New-Item -Path $effectPath -Force -ErrorAction Stop | Out-Null
-            New-ItemProperty -Path $effectPath -Name 'DefaultApplied' -Value $entry.Value -PropertyType DWord -Force -ErrorAction Stop | Out-Null
-        }
-
-        foreach ($entry in $preservedEffects.GetEnumerator()) {
+        foreach ($entry in $effectValues.GetEnumerator()) {
             $effectPath = "$visualEffectsPath\$($entry.Key)"
             New-Item -Path $effectPath -Force -ErrorAction Stop | Out-Null
             New-ItemProperty -Path $effectPath -Name 'DefaultApplied' -Value $entry.Value -PropertyType DWord -Force -ErrorAction Stop | Out-Null
@@ -408,6 +365,9 @@ function Set-VisualEffectsProfile {
         New-ItemProperty -Path $desktopPath -Name 'DragFullWindows' -Value '1' -PropertyType String -Force -ErrorAction Stop | Out-Null
         New-ItemProperty -Path $desktopPath -Name 'FontSmoothing' -Value '2' -PropertyType String -Force -ErrorAction Stop | Out-Null
         New-ItemProperty -Path $desktopPath -Name 'FontSmoothingType' -Value 2 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+        # UserPreferencesMask is the live bitmask Windows reads; without it the
+        # DefaultApplied keys above only affect the Performance Options dialog UI
+        New-ItemProperty -Path $desktopPath -Name 'UserPreferencesMask' -Value $userPrefMask -PropertyType Binary -Force -ErrorAction Stop | Out-Null
         New-Item -Path $windowMetricsPath -Force -ErrorAction Stop | Out-Null
         New-ItemProperty -Path $windowMetricsPath -Name 'MinAnimate' -Value '0' -PropertyType String -Force -ErrorAction Stop | Out-Null
 
@@ -415,6 +375,39 @@ function Set-VisualEffectsProfile {
     }
     catch {
         Write-Log ("Failed to apply visual-effects profile for {0}: {1}" -f $ScopeLabel, $_.Exception.Message) 'ERROR'
+    }
+}
+
+function Invoke-WithMountedHive {
+    param(
+        [string]$HivePath,
+        [string]$MountName,
+        [string]$ScopeLabel
+    )
+    $mounted = $false
+    try {
+        if ($WhatIfMode) {
+            Write-Log "WHATIF: reg.exe load HKU\\$MountName '$HivePath'"
+            Set-VisualEffectsProfile -HiveRoot "Registry::HKEY_USERS\$MountName" -ScopeLabel $ScopeLabel
+            Write-Log "WHATIF: reg.exe unload HKU\\$MountName"
+        }
+        else {
+            & reg.exe load "HKU\$MountName" "$HivePath" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Log "Failed to load hive for $ScopeLabel from '$HivePath'" 'ERROR'
+                return
+            }
+            $mounted = $true
+            Set-VisualEffectsProfile -HiveRoot "Registry::HKEY_USERS\$MountName" -ScopeLabel $ScopeLabel
+        }
+    }
+    finally {
+        if ($mounted) {
+            & reg.exe unload "HKU\$MountName" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Log "Failed to unload temporary hive HKU\\$MountName" 'WARN'
+            }
+        }
     }
 }
 
@@ -446,33 +439,9 @@ function Set-VisualEffectsForAllUsers {
             continue
         }
 
-        $mountName = "TEMP_USER_$($sid -replace '-', '_')"
-        $mounted = $false
-        try {
-            if ($WhatIfMode) {
-                Write-Log "WHATIF: reg.exe load HKU\\$mountName '$ntUserDatPath'"
-                Set-VisualEffectsProfile -HiveRoot "Registry::HKEY_USERS\$mountName" -ScopeLabel "offline user SID $sid"
-                Write-Log "WHATIF: reg.exe unload HKU\\$mountName"
-            }
-            else {
-                & reg.exe load "HKU\$mountName" "$ntUserDatPath" | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Log "Failed to load user hive for SID $sid from '$ntUserDatPath'" 'ERROR'
-                    continue
-                }
-
-                $mounted = $true
-                Set-VisualEffectsProfile -HiveRoot "Registry::HKEY_USERS\$mountName" -ScopeLabel "offline user SID $sid"
-            }
-        }
-        finally {
-            if ($mounted) {
-                & reg.exe unload "HKU\$mountName" | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Log "Failed to unload temporary hive HKU\\$mountName" 'WARN'
-                }
-            }
-        }
+        Invoke-WithMountedHive -HivePath $ntUserDatPath `
+            -MountName "TEMP_USER_$($sid -replace '-', '_')" `
+            -ScopeLabel "offline user SID $sid"
     }
 
     $defaultProfileRoot = (Get-ItemProperty -Path $profileListPath -Name 'Default' -ErrorAction SilentlyContinue).Default
@@ -485,33 +454,7 @@ function Set-VisualEffectsForAllUsers {
 
     $defaultProfileDat = Join-Path $defaultProfileRoot 'NTUSER.DAT'
     if (Test-Path $defaultProfileDat) {
-        $defaultMountName = 'WDL_DefaultProfile'
-        $mountedDefault = $false
-        try {
-            if ($WhatIfMode) {
-                Write-Log "WHATIF: reg.exe load HKU\\$defaultMountName '$defaultProfileDat'"
-                Set-VisualEffectsProfile -HiveRoot "Registry::HKEY_USERS\$defaultMountName" -ScopeLabel 'default user profile'
-                Write-Log "WHATIF: reg.exe unload HKU\\$defaultMountName"
-            }
-            else {
-                & reg.exe load "HKU\$defaultMountName" "$defaultProfileDat" | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Log "Failed to load default user hive from '$defaultProfileDat'" 'ERROR'
-                }
-                else {
-                    $mountedDefault = $true
-                    Set-VisualEffectsProfile -HiveRoot "Registry::HKEY_USERS\$defaultMountName" -ScopeLabel 'default user profile'
-                }
-            }
-        }
-        finally {
-            if ($mountedDefault) {
-                & reg.exe unload "HKU\$defaultMountName" | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Log "Failed to unload temporary hive HKU\\$defaultMountName" 'WARN'
-                }
-            }
-        }
+        Invoke-WithMountedHive -HivePath $defaultProfileDat -MountName 'WDL_DefaultProfile' -ScopeLabel 'default user profile'
     }
     else {
         Write-Log "Default profile hive not found: $defaultProfileDat" 'WARN'
@@ -519,11 +462,6 @@ function Set-VisualEffectsForAllUsers {
 }
 
 function Set-EdgePolicyDefaultsForAllUsers {
-    <#
-    .SYNOPSIS
-        Configures Microsoft Edge policies at HKLM for all existing and future users.
-    #>
-
     $edgePolicyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
     $homepage = 'https://google.com'
 
@@ -539,9 +477,7 @@ function Set-EdgePolicyDefaultsForAllUsers {
     }
 
     try {
-        if (-not (Test-Path $edgePolicyPath)) {
-            New-Item -Path $edgePolicyPath -Force | Out-Null
-        }
+        New-Item -Path $edgePolicyPath -Force | Out-Null
 
         New-ItemProperty -Path $edgePolicyPath -Name 'TranslateEnabled' -Value 0 -PropertyType DWord -Force | Out-Null
         New-ItemProperty -Path $edgePolicyPath -Name 'HomepageLocation' -Value $homepage -PropertyType String -Force | Out-Null
@@ -569,10 +505,7 @@ function Remove-NewOutlookTaskbarPinForCurrentUser {
     try {
         if (Test-Path $taskbarPinDir) {
             $newOutlookPins = Get-ChildItem -Path $taskbarPinDir -Filter '*.lnk' -ErrorAction SilentlyContinue |
-                Where-Object {
-                    $_.BaseName -match '(?i)outlook\s*\(new\)' -or
-                    $_.BaseName -match '(?i)new\s*outlook'
-                }
+                Where-Object { $_.BaseName -match '(?i)(outlook\s*\(new\)|new\s*outlook)' }
 
             foreach ($pin in $newOutlookPins) {
                 Remove-Item -Path $pin.FullName -Force -ErrorAction Stop
@@ -617,11 +550,15 @@ if ($WhatIfMode) {
 
 Write-Log "Target package count: $($Targets.Count)"
 
-foreach ($target in $Targets) {
-    Write-Log "Processing target: $target"
+# Strip any protected packages that were accidentally added to $Targets
+$blocked = $Targets | Where-Object { $ProtectedTargets -contains $_ }
+foreach ($pkg in $blocked) {
+    Write-Log "Removing '$pkg' from targets — it is in the protected list." 'WARN'
+}
+$Targets = $Targets | Where-Object { $ProtectedTargets -notcontains $_ }
 
-    Remove-InstalledAppxForExistingUsers -PackageName $target
-    Remove-ProvisionedAppxForFutureUsers -PackageName $target
+foreach ($target in $Targets) {
+    Remove-AppxTarget -PackageName $target
 }
 
 Set-OldRightClickMenuForAllUsers
