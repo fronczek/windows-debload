@@ -180,8 +180,8 @@ function Set-OldRightClickMenuForAllUsers {
     }
 
     try {
-        New-Item -Path $keyPath -Force | Out-Null
-        Set-ItemProperty -Path $keyPath -Name '(default)' -Value ''
+        New-Item -Path $keyPath -Force -ErrorAction Stop | Out-Null
+        Set-ItemProperty -Path $keyPath -Name '(default)' -Value '' -ErrorAction Stop
         Write-Log "Classic right-click menu configured at machine scope."
     }
     catch {
@@ -270,17 +270,17 @@ function Set-VisualEffectsProfile {
     }
 
     try {
-        New-Item -Path $visualEffectsPath -Force | Out-Null
-        New-ItemProperty -Path $visualEffectsPath -Name 'VisualFXSetting' -Value 3 -PropertyType DWord -Force | Out-Null
+        New-Item -Path $visualEffectsPath -Force -ErrorAction Stop | Out-Null
+        New-ItemProperty -Path $visualEffectsPath -Name 'VisualFXSetting' -Value 3 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
 
         foreach ($entry in $effectSettings.GetEnumerator()) {
             $effectPath = "$visualEffectsPath\$($entry.Key)"
-            New-Item -Path $effectPath -Force | Out-Null
-            New-ItemProperty -Path $effectPath -Name 'DefaultApplied' -Value $entry.Value -PropertyType DWord -Force | Out-Null
+            New-Item -Path $effectPath -Force -ErrorAction Stop | Out-Null
+            New-ItemProperty -Path $effectPath -Name 'DefaultApplied' -Value $entry.Value -PropertyType DWord -Force -ErrorAction Stop | Out-Null
         }
 
-        New-Item -Path $desktopPath -Force | Out-Null
-        New-ItemProperty -Path $desktopPath -Name 'DragFullWindows' -Value '1' -PropertyType String -Force | Out-Null
+        New-Item -Path $desktopPath -Force -ErrorAction Stop | Out-Null
+        New-ItemProperty -Path $desktopPath -Name 'DragFullWindows' -Value '1' -PropertyType String -Force -ErrorAction Stop | Out-Null
 
         Write-Log "Visual-effects profile applied for $ScopeLabel."
     }
@@ -313,7 +313,7 @@ function Set-VisualEffectsForAllUsers {
 
         $loadedHivePath = "Registry::HKEY_USERS\$sid"
         if (Test-Path $loadedHivePath) {
-            Set-VisualEffectsProfile -HiveRoot "HKU:\$sid" -ScopeLabel "loaded user SID $sid"
+            Set-VisualEffectsProfile -HiveRoot $loadedHivePath -ScopeLabel "loaded user SID $sid"
             continue
         }
 
@@ -322,7 +322,7 @@ function Set-VisualEffectsForAllUsers {
         try {
             if ($WhatIfMode) {
                 Write-Log "WHATIF: reg.exe load HKU\\$mountName '$ntUserDatPath'"
-                Set-VisualEffectsProfile -HiveRoot "HKU:\$mountName" -ScopeLabel "offline user SID $sid"
+                Set-VisualEffectsProfile -HiveRoot "Registry::HKEY_USERS\$mountName" -ScopeLabel "offline user SID $sid"
                 Write-Log "WHATIF: reg.exe unload HKU\\$mountName"
             }
             else {
@@ -333,7 +333,7 @@ function Set-VisualEffectsForAllUsers {
                 }
 
                 $mounted = $true
-                Set-VisualEffectsProfile -HiveRoot "HKU:\$mountName" -ScopeLabel "offline user SID $sid"
+                Set-VisualEffectsProfile -HiveRoot "Registry::HKEY_USERS\$mountName" -ScopeLabel "offline user SID $sid"
             }
         }
         finally {
@@ -361,7 +361,7 @@ function Set-VisualEffectsForAllUsers {
         try {
             if ($WhatIfMode) {
                 Write-Log "WHATIF: reg.exe load HKU\\$defaultMountName '$defaultProfileDat'"
-                Set-VisualEffectsProfile -HiveRoot "HKU:\$defaultMountName" -ScopeLabel 'default user profile'
+                Set-VisualEffectsProfile -HiveRoot "Registry::HKEY_USERS\$defaultMountName" -ScopeLabel 'default user profile'
                 Write-Log "WHATIF: reg.exe unload HKU\\$defaultMountName"
             }
             else {
@@ -371,7 +371,7 @@ function Set-VisualEffectsForAllUsers {
                 }
                 else {
                     $mountedDefault = $true
-                    Set-VisualEffectsProfile -HiveRoot "HKU:\$defaultMountName" -ScopeLabel 'default user profile'
+                    Set-VisualEffectsProfile -HiveRoot "Registry::HKEY_USERS\$defaultMountName" -ScopeLabel 'default user profile'
                 }
             }
         }
