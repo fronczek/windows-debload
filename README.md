@@ -32,6 +32,10 @@ After removing the Windows 11 Store Notepad, the script:
 
 Because these settings live under `HKLM` they apply machine-wide and are inherited by all new user profiles automatically.
 
+### New Outlook taskbar pin cleanup
+
+The script also removes **New Outlook** taskbar pins for the user running it, preventing stale taskbar buttons from triggering a reinstall attempt after the app package is removed.
+
 ## Usage
 
 ```powershell

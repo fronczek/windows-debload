@@ -231,6 +231,58 @@ function Set-ClassicNotepadShellNew {
     }
 }
 
+function Remove-NewOutlookTaskbarPinForCurrentUser {
+    Write-Log "Removing New Outlook taskbar pin for the current user (if present)."
+
+    $taskbarPinDir = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
+
+    if ($WhatIfMode) {
+        Write-Log "WHATIF: Would remove New Outlook .lnk files from '$taskbarPinDir' and invoke taskbar unpin verb for OutlookForWindows app IDs."
+        return
+    }
+
+    try {
+        if (Test-Path $taskbarPinDir) {
+            $newOutlookPins = Get-ChildItem -Path $taskbarPinDir -Filter '*.lnk' -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.BaseName -match '(?i)outlook\s*\(new\)' -or
+                    $_.BaseName -match '(?i)new\s*outlook'
+                }
+
+            foreach ($pin in $newOutlookPins) {
+                Remove-Item -Path $pin.FullName -Force -ErrorAction Stop
+                Write-Log "Removed pinned taskbar shortcut: $($pin.Name)"
+            }
+        }
+
+        $shell = $null
+        try {
+            $shell = New-Object -ComObject Shell.Application
+            $appsFolder = $shell.Namespace('shell:AppsFolder')
+            $outlookAppItems = $appsFolder.Items() |
+                Where-Object { $_.Path -like '*Microsoft.OutlookForWindows*' }
+
+            foreach ($item in $outlookAppItems) {
+                try {
+                    $item.InvokeVerb('taskbarunpin')
+                    Write-Log "Invoked taskbar unpin for app item: $($item.Name)"
+                }
+                catch {
+                    Write-Log "Taskbar unpin invoke failed for '$($item.Name)': $($_.Exception.Message)" 'WARN'
+                }
+            }
+        }
+        finally {
+            if ($shell) {
+                [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+            }
+        }
+    }
+    catch {
+        Write-Log "Failed to remove New Outlook taskbar pin: $($_.Exception.Message)" 'ERROR'
+    }
+}
+
 Write-Log "Starting Windows 11 Appx debloat."
 Write-Log "Log file: $LogPath"
 
@@ -248,6 +300,7 @@ foreach ($target in $Targets) {
 }
 
 Set-OldRightClickMenuForAllUsers
+Remove-NewOutlookTaskbarPinForCurrentUser
 
 Write-Log "Finished Windows 11 Appx debloat."
 
