@@ -255,14 +255,27 @@ function Remove-NewOutlookTaskbarPinForCurrentUser {
             }
         }
 
-        $shell = New-Object -ComObject Shell.Application
-        $appsFolder = $shell.Namespace('shell:AppsFolder')
-        $outlookAppItems = $appsFolder.Items() |
-            Where-Object { $_.Path -like '*Microsoft.OutlookForWindows*' }
+        $shell = $null
+        try {
+            $shell = New-Object -ComObject Shell.Application
+            $appsFolder = $shell.Namespace('shell:AppsFolder')
+            $outlookAppItems = $appsFolder.Items() |
+                Where-Object { $_.Path -like '*Microsoft.OutlookForWindows*' }
 
-        foreach ($item in $outlookAppItems) {
-            $item.InvokeVerb('taskbarunpin')
-            Write-Log "Invoked taskbar unpin for app item: $($item.Name)"
+            foreach ($item in $outlookAppItems) {
+                try {
+                    $item.InvokeVerb('taskbarunpin')
+                    Write-Log "Invoked taskbar unpin for app item: $($item.Name)"
+                }
+                catch {
+                    Write-Log "Taskbar unpin invoke failed for '$($item.Name)': $($_.Exception.Message)" 'WARN'
+                }
+            }
+        }
+        finally {
+            if ($shell) {
+                [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+            }
         }
     }
     catch {
