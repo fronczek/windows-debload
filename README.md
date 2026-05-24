@@ -32,6 +32,18 @@ After removing the Windows 11 Store Notepad, the script:
 
 Because these settings live under `HKLM` they apply machine-wide and are inherited by all new user profiles automatically.
 
+### Visual effects: disable menu animations, keep shadows and dragging
+
+The script also applies a custom visual-effects profile for:
+
+* all existing local user profiles (loaded or offline hives), and
+* the default user profile (`C:\Users\Default\NTUSER.DAT`) so new users inherit it.
+
+Applied behavior:
+
+* menu-related animations are disabled (`MenuAnimation`, `ComboBoxAnimation`, `ListBoxSmoothScrolling`, `TooltipAnimation`, `SelectionFade`, `TaskbarAnimations`, `ControlAnimations`)
+* shadows and dragging are kept enabled (`DropShadow`, `CursorShadow`, `DragFullWindows`)
+
 ## Usage
 
 ```powershell
@@ -67,4 +79,12 @@ Confirm the ShellNew and open-command registry entries:
 ```powershell
 Get-ItemProperty 'HKLM:\SOFTWARE\Classes\.txt\ShellNew'
 Get-ItemProperty 'HKLM:\SOFTWARE\Classes\txtfile\shell\open\command'
+```
+
+For the currently logged-on user, confirm visual effects:
+
+```powershell
+Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects\MenuAnimation'
+Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects\DropShadow'
+Get-ItemProperty 'HKCU:\Control Panel\Desktop' -Name DragFullWindows
 ```

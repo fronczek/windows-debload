@@ -231,6 +231,153 @@ function Set-ClassicNotepadShellNew {
     }
 }
 
+function Set-VisualEffectsProfile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HiveRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$ScopeLabel
+    )
+
+    $effectSettings = @{
+        ControlAnimations   = 0
+        MenuAnimation       = 0
+        ComboBoxAnimation   = 0
+        ListBoxSmoothScrolling = 0
+        TooltipAnimation    = 0
+        SelectionFade       = 0
+        TaskbarAnimations   = 0
+        DropShadow          = 1
+        CursorShadow        = 1
+        DragFullWindows     = 1
+    }
+
+    $visualEffectsPath = "$HiveRoot\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
+    $desktopPath = "$HiveRoot\Control Panel\Desktop"
+
+    Write-Log "Applying visual-effects profile for $ScopeLabel (disable menu animations, keep shadows and dragging)."
+
+    if ($WhatIfMode) {
+        Write-Log "WHATIF: Would set '$visualEffectsPath\\VisualFXSetting' to 3"
+        Write-Log "WHATIF: Would set '$desktopPath\\DragFullWindows' to '1'"
+        foreach ($name in $effectSettings.Keys) {
+            Write-Log "WHATIF: Would set '$visualEffectsPath\\$name\\DefaultApplied' to $($effectSettings[$name])"
+        }
+        return
+    }
+
+    try {
+        New-Item -Path $visualEffectsPath -Force | Out-Null
+        New-ItemProperty -Path $visualEffectsPath -Name 'VisualFXSetting' -Value 3 -PropertyType DWord -Force | Out-Null
+
+        foreach ($entry in $effectSettings.GetEnumerator()) {
+            $effectPath = "$visualEffectsPath\$($entry.Key)"
+            New-Item -Path $effectPath -Force | Out-Null
+            New-ItemProperty -Path $effectPath -Name 'DefaultApplied' -Value $entry.Value -PropertyType DWord -Force | Out-Null
+        }
+
+        New-Item -Path $desktopPath -Force | Out-Null
+        New-ItemProperty -Path $desktopPath -Name 'DragFullWindows' -Value '1' -PropertyType String -Force | Out-Null
+
+        Write-Log "Visual-effects profile applied for $ScopeLabel."
+    }
+    catch {
+        Write-Log "Failed to apply visual-effects profile for $ScopeLabel: $($_.Exception.Message)" 'ERROR'
+    }
+}
+
+function Set-VisualEffectsForAllUsers {
+    Write-Log "Configuring visual effects for all existing and future users."
+
+    $profileListPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList'
+    $userSids = Get-ChildItem -Path $profileListPath -ErrorAction SilentlyContinue |
+        Where-Object { $_.PSChildName -match '^S-1-5-21-' } |
+        Select-Object -ExpandProperty PSChildName -Unique
+
+    foreach ($sid in $userSids) {
+        $profileProps = Get-ItemProperty -Path "$profileListPath\$sid" -ErrorAction SilentlyContinue
+        if (-not $profileProps.ProfileImagePath) {
+            Write-Log "Skipping SID with no profile path: $sid" 'WARN'
+            continue
+        }
+
+        $profilePath = [Environment]::ExpandEnvironmentVariables($profileProps.ProfileImagePath)
+        $ntUserDatPath = Join-Path $profilePath 'NTUSER.DAT'
+        if (-not (Test-Path $ntUserDatPath)) {
+            Write-Log "Skipping SID '$sid'; NTUSER.DAT not found at '$ntUserDatPath'" 'WARN'
+            continue
+        }
+
+        $loadedHivePath = "Registry::HKEY_USERS\$sid"
+        if (Test-Path $loadedHivePath) {
+            Set-VisualEffectsProfile -HiveRoot "HKU:\$sid" -ScopeLabel "loaded user SID $sid"
+            continue
+        }
+
+        $mountName = "WDL_$($sid.Split('-')[-1])"
+        $mounted = $false
+        try {
+            if ($WhatIfMode) {
+                Write-Log "WHATIF: reg.exe load HKU\\$mountName '$ntUserDatPath'"
+                Set-VisualEffectsProfile -HiveRoot "HKU:\$mountName" -ScopeLabel "offline user SID $sid"
+                Write-Log "WHATIF: reg.exe unload HKU\\$mountName"
+            }
+            else {
+                & reg.exe load "HKU\$mountName" "$ntUserDatPath" | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Log "Failed to load user hive for SID $sid from '$ntUserDatPath'" 'ERROR'
+                    continue
+                }
+
+                $mounted = $true
+                Set-VisualEffectsProfile -HiveRoot "HKU:\$mountName" -ScopeLabel "offline user SID $sid"
+            }
+        }
+        finally {
+            if ($mounted) {
+                & reg.exe unload "HKU\$mountName" | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Log "Failed to unload temporary hive HKU\\$mountName" 'WARN'
+                }
+            }
+        }
+    }
+
+    $defaultProfileDat = Join-Path $env:SystemDrive 'Users\Default\NTUSER.DAT'
+    if (Test-Path $defaultProfileDat) {
+        $defaultMountName = 'WDL_DefaultProfile'
+        $mountedDefault = $false
+        try {
+            if ($WhatIfMode) {
+                Write-Log "WHATIF: reg.exe load HKU\\$defaultMountName '$defaultProfileDat'"
+                Set-VisualEffectsProfile -HiveRoot "HKU:\$defaultMountName" -ScopeLabel 'default user profile'
+                Write-Log "WHATIF: reg.exe unload HKU\\$defaultMountName"
+            }
+            else {
+                & reg.exe load "HKU\$defaultMountName" "$defaultProfileDat" | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Log "Failed to load default user hive from '$defaultProfileDat'" 'ERROR'
+                }
+                else {
+                    $mountedDefault = $true
+                    Set-VisualEffectsProfile -HiveRoot "HKU:\$defaultMountName" -ScopeLabel 'default user profile'
+                }
+            }
+        }
+        finally {
+            if ($mountedDefault) {
+                & reg.exe unload "HKU\$defaultMountName" | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Log "Failed to unload temporary hive HKU\\$defaultMountName" 'WARN'
+                }
+            }
+        }
+    }
+    else {
+        Write-Log "Default profile hive not found: $defaultProfileDat" 'WARN'
+    }
+}
+
 Write-Log "Starting Windows 11 Appx debloat."
 Write-Log "Log file: $LogPath"
 
@@ -248,6 +395,7 @@ foreach ($target in $Targets) {
 }
 
 Set-OldRightClickMenuForAllUsers
+Set-VisualEffectsForAllUsers
 
 Write-Log "Finished Windows 11 Appx debloat."
 
@@ -258,3 +406,6 @@ Write-Host 'Verification commands:'
 Write-Host '  Get-AppxPackage -AllUsers | Sort-Object Name | Select-Object Name, PackageFullName'
 Write-Host '  Get-AppxProvisionedPackage -Online | Sort-Object DisplayName | Select-Object DisplayName, PackageName'
 Write-Host '  Get-ItemProperty "HKLM:\SOFTWARE\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32"'
+Write-Host '  Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects\MenuAnimation"'
+Write-Host '  Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects\DropShadow"'
+Write-Host '  Get-ItemProperty "HKCU:\Control Panel\Desktop" -Name DragFullWindows'
